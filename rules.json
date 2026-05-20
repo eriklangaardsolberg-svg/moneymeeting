@@ -434,6 +434,11 @@
       "m": "contains",
       "v": "tyrifjord golfklubb",
       "cat": "Health & wellbeing"
+    },
+    {
+      "m": "contains",
+      "v": "lett klingenber",
+      "cat": "Jobblunch"
     }
   ],
   "categories": [

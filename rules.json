@@ -419,6 +419,11 @@
       "m": "contains",
       "v": "klarna:cubus 8wn",
       "cat": "Barneutgifter"
+    },
+    {
+      "m": "contains",
+      "v": "klarna: polarnopyret.",
+      "cat": "Barneutgifter"
     }
   ],
   "categories": [

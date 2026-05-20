@@ -444,6 +444,11 @@
       "m": "contains",
       "v": "flytoget app vi",
       "cat": "Travel"
+    },
+    {
+      "m": "contains",
+      "v": "dr.dropin hhv g",
+      "cat": "Health & wellbeing"
     }
   ],
   "categories": [

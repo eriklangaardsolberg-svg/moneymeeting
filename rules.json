@@ -439,6 +439,11 @@
       "m": "contains",
       "v": "lett klingenber",
       "cat": "Jobblunch"
+    },
+    {
+      "m": "contains",
+      "v": "flytoget app vi",
+      "cat": "Travel"
     }
   ],
   "categories": [

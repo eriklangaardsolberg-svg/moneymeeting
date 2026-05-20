@@ -585,12 +585,22 @@ async function sbSaveSession(d1,report,baseTransactions){
     status:'in_progress',
     updated_at:new Date().toISOString()
   };
-  var patchResp=await fetch(SB_URL+'/rest/v1/monthly_sessions?month_key=eq.'+monthKey,{method:'PATCH',headers:Object.assign({},simpleHdrs,{'Prefer':'return=representation'}),body:JSON.stringify(session)});
-  var patched=patchResp.ok?await patchResp.json():[];
-  if(!Array.isArray(patched)||patched.length===0){
-    var postResp=await fetch(SB_URL+'/rest/v1/monthly_sessions',{method:'POST',headers:simpleHdrs,body:JSON.stringify(session)});
-    if(!postResp.ok){var sessErr=await postResp.text();throw new Error('Session save failed ('+postResp.status+'): '+sessErr);}
+  async function _doSessionWrite(body){
+    var pr=await fetch(SB_URL+'/rest/v1/monthly_sessions?month_key=eq.'+monthKey,{method:'PATCH',headers:Object.assign({},simpleHdrs,{'Prefer':'return=representation'}),body:JSON.stringify(body)});
+    var pd=pr.ok?await pr.json():null;
+    if(pd&&Array.isArray(pd)&&pd.length>0)return{ok:true,resp:pr};
+    if(!pr.ok)return{ok:false,resp:pr};
+    var por=await fetch(SB_URL+'/rest/v1/monthly_sessions',{method:'POST',headers:simpleHdrs,body:JSON.stringify(body)});
+    return{ok:por.ok,resp:por};
   }
+  var sessResult=await _doSessionWrite(session);
+  if(!sessResult.ok&&session.projection){
+    // Schema may lack the projection JSONB column - retry without it so the rest of the session still saves
+    console.warn('[SB] projection field rejected. To persist projection snapshots in history, run on your Supabase project: ALTER TABLE monthly_sessions ADD COLUMN projection JSONB;');
+    var sessionLite=Object.assign({},session);delete sessionLite.projection;
+    sessResult=await _doSessionWrite(sessionLite);
+  }
+  if(!sessResult.ok){var sessErr=await sessResult.resp.text();throw new Error('Session save failed ('+sessResult.resp.status+'): '+sessErr);}
   setSaveStatus('Saved to cloud');
 }
 
@@ -1021,6 +1031,39 @@ function render(d){
 
   h+='<div class="metrics" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="metric"><div class="metric-label">Total income</div><div class="metric-value pos">'+fmt(realIncome)+'</div></div><div class="metric"><div class="metric-label">Total expenses'+(d.isPartial?' <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text3)">· so far this month</span>':'')+'</div><div class="metric-value">'+fmt(d.totalExp)+'</div></div></div>';
 
+  if(d.isPartial){
+    var P=computeProjection(d);
+    var _projBody='<div class="metrics">'
+      +'<div class="metric"><div class="metric-label">Projected expenses</div><div class="metric-value">'+fmt(P.projExp)+'</div></div>'
+      +'<div class="metric"><div class="metric-label">'+(P.salaryReceived?'Actual income':'Expected income')+'</div><div class="metric-value pos">'+fmt(P.effectiveIncome)+(P.salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div>'
+      +'<div class="metric"><div class="metric-label">Projected net</div><div class="metric-value '+(P.projNet>=0?'pos':'neg')+'">'+(P.projNet>=0?'+':'')+fmt(P.projNet)+'</div></div>'
+      +'</div>';
+    var incomeFillPct=P.effectiveIncome>0?Math.min(P.actualIncome/P.effectiveIncome,1):0;
+    var budgetFillPct=P.projectedBudgeted>0?Math.min(P.actualBudgeted/P.projectedBudgeted,1):0;
+    var budgetOver=P.actualBudgeted>P.projectedBudgeted;
+    var headroomNewColor=P.headroomRemaining>=0?'pos':'neg';
+    _projBody+='<div class="metrics">'
+      +'<div class="metric">'
+        +'<div class="metric-fill" style="width:'+(incomeFillPct*100).toFixed(1)+'%;background:var(--green-bg);"></div>'
+        +'<div class="metric-label">Projected income</div>'
+        +'<div class="metric-value pos">'+fmt(P.effectiveIncome)+'</div>'
+        +'<div class="metric-sub"><span>Actual: '+fmt(P.actualIncome)+'</span><span class="metric-sub-pct">'+(incomeFillPct*100).toFixed(0)+'%</span></div>'
+      +'</div>'
+      +'<div class="metric">'
+        +'<div class="metric-fill" style="width:'+(budgetFillPct*100).toFixed(1)+'%;background:'+(budgetOver?'var(--red-bg)':'var(--amber-bg)')+';"></div>'
+        +'<div class="metric-label">Projected budgeted costs</div>'
+        +'<div class="metric-value">'+fmt(P.projectedBudgeted)+'</div>'
+        +'<div class="metric-sub"><span>Actual: '+fmt(P.actualBudgeted)+'</span><span class="metric-sub-pct">'+(budgetFillPct*100).toFixed(0)+'%</span></div>'
+      +'</div>'
+      +'<div class="metric">'
+        +'<div class="metric-label">Unbudgeted costs</div>'
+        +'<div class="metric-value">'+fmt(P.nonBudgetedActual)+'</div>'
+        +'<div class="metric-sub"><span>Headroom remaining</span><span class="'+headroomNewColor+'" style="font-weight:500;">'+(P.headroomRemaining>=0?'+':'')+fmt(P.headroomRemaining)+'</span></div>'
+      +'</div>'
+      +'</div>';
+    h+=sectionWrap('sec_projection','Projection — '+d.daysElapsed+' of '+d.daysInMonth+' days elapsed',_projBody);
+  }
+
   // Buffer alert box
   if(bufferTotal>0){
     h+='<div style="background:#eef4fc;border:1px solid #b8d4f0;border-radius:var(--r);padding:12px 18px;margin-bottom:24px;display:flex;align-items:center;gap:14px;">';
@@ -1061,40 +1104,7 @@ function render(d){
   }
 
   if(d.isPartial){
-    var P=computeProjection(d);
-
-    // Projection section: row 1 (kept) + row 2 (income / budget / unbudgeted with fill bars)
-    var _projBody='<div class="metrics">'
-      +'<div class="metric"><div class="metric-label">Projected expenses</div><div class="metric-value">'+fmt(P.projExp)+'</div></div>'
-      +'<div class="metric"><div class="metric-label">'+(P.salaryReceived?'Actual income':'Expected income')+'</div><div class="metric-value pos">'+fmt(P.effectiveIncome)+(P.salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div>'
-      +'<div class="metric"><div class="metric-label">Projected net</div><div class="metric-value '+(P.projNet>=0?'pos':'neg')+'">'+(P.projNet>=0?'+':'')+fmt(P.projNet)+'</div></div>'
-      +'</div>';
-    var incomeFillPct=P.effectiveIncome>0?Math.min(P.actualIncome/P.effectiveIncome,1):0;
-    var budgetFillPct=P.projectedBudgeted>0?Math.min(P.actualBudgeted/P.projectedBudgeted,1):0;
-    var budgetOver=P.actualBudgeted>P.projectedBudgeted;
-    var headroomNewColor=P.headroomRemaining>=0?'pos':'neg';
-    _projBody+='<div class="metrics">'
-      +'<div class="metric">'
-        +'<div class="metric-fill" style="width:'+(incomeFillPct*100).toFixed(1)+'%;background:var(--green-bg);"></div>'
-        +'<div class="metric-label">Projected income</div>'
-        +'<div class="metric-value pos">'+fmt(P.effectiveIncome)+'</div>'
-        +'<div class="metric-sub"><span>Actual: '+fmt(P.actualIncome)+'</span><span class="metric-sub-pct">'+(incomeFillPct*100).toFixed(0)+'%</span></div>'
-      +'</div>'
-      +'<div class="metric">'
-        +'<div class="metric-fill" style="width:'+(budgetFillPct*100).toFixed(1)+'%;background:'+(budgetOver?'var(--red-bg)':'var(--amber-bg)')+';"></div>'
-        +'<div class="metric-label">Projected budgeted costs</div>'
-        +'<div class="metric-value">'+fmt(P.projectedBudgeted)+'</div>'
-        +'<div class="metric-sub"><span>Actual: '+fmt(P.actualBudgeted)+'</span><span class="metric-sub-pct">'+(budgetFillPct*100).toFixed(0)+'%</span></div>'
-      +'</div>'
-      +'<div class="metric">'
-        +'<div class="metric-label">Unbudgeted costs</div>'
-        +'<div class="metric-value">'+fmt(P.nonBudgetedActual)+'</div>'
-        +'<div class="metric-sub"><span>Headroom remaining</span><span class="'+headroomNewColor+'" style="font-weight:500;">'+(P.headroomRemaining>=0?'+':'')+fmt(P.headroomRemaining)+'</span></div>'
-      +'</div>'
-      +'</div>';
-    h+=sectionWrap('sec_projection','Projection \u2014 '+d.daysElapsed+' of '+d.daysInMonth+' days elapsed',_projBody);
-
-    // Fixed items detection (drives both headroom calc and paid/pending list)
+    // Fixed items detection drives the paid/pending list (projection rendered at top of page)
     var allExpenseTxs=Object.keys(d.byCategory).reduce(function(arr,cat){return arr.concat(d.byCategory[cat]||[]);},[]);
     var fixedItems=[
       {key:'mortgage', label:'Mortgage',amount:28000,     patterns:[/bolij/i,/mortgage/i,/l.n\s+510288/i]},

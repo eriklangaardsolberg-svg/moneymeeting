@@ -47,9 +47,14 @@ body{font-family:'DM Sans',sans-serif;font-size:14px;background:var(--bg);color:
 .section{margin-bottom:28px;}
 .section-title{font-size:11px;text-transform:uppercase;letter-spacing:.8px;font-weight:500;color:var(--text3);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
 .metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:24px;}
-.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;position:relative;overflow:hidden;}
+.metric>*{position:relative;z-index:1;}
+.metric .metric-fill{position:absolute;left:0;top:0;bottom:0;z-index:0;}
 .metric-label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:4px;font-weight:500;}
 .metric-value{font-size:20px;font-weight:500;letter-spacing:-.5px;}
+.metric-sub{font-size:11px;color:var(--text2);margin-top:8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+.metric-sub-pct{font-weight:500;color:var(--text2);}
+.metric-sub .pos{color:var(--green);}.metric-sub .neg{color:var(--red);}
 .pos{color:var(--green);}.neg{color:var(--red);}
 .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -227,12 +232,28 @@ async function loadMonth(mk){
   if(inProg) h+='<div class="inprog-notice">This month is still in progress. Data shown reflects the last upload.</div>';
   if(isPartial&&!inProg) h+='<div class="inprog-notice">Partial month: '+session.days_elapsed+' of '+session.days_in_month+' days covered.</div>';
 
-  // Summary metrics
-  h+='<div class="metrics">'
+  h+='<div class="metrics" style="grid-template-columns:repeat(2,minmax(0,1fr))">'
     +'<div class="metric"><div class="metric-label">Total income</div><div class="metric-value pos">'+fmt(totalIncome)+'</div></div>'
-    +'<div class="metric"><div class="metric-label">Total expenses</div><div class="metric-value">'+fmt(totalExp)+'</div></div>'
-    +'<div class="metric"><div class="metric-label">Net position</div><div class="metric-value '+(net>=0?'pos':'neg')+'">'+(net>=0?'+':'')+fmt(net)+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Total expenses'+(isPartial?' <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text3)">· so far this month</span>':'')+'</div><div class="metric-value">'+fmt(totalExp)+'</div></div>'
     +'</div>';
+
+  var P=session.projection;
+  if(P){
+    var incPct=P.projected_income>0?Math.min(P.actual_income/P.projected_income,1):0;
+    var bdgPct=P.projected_budgeted>0?Math.min(P.actual_budgeted/P.projected_budgeted,1):0;
+    var bdgOver=P.actual_budgeted>P.projected_budgeted;
+    var hrColor=P.headroom_remaining>=0?'pos':'neg';
+    h+='<div class="metrics">'
+      +'<div class="metric"><div class="metric-label">Projected expenses</div><div class="metric-value">'+fmt(P.projected_expenses)+'</div></div>'
+      +'<div class="metric"><div class="metric-label">'+(P.salary_received?'Actual income':'Expected income')+'</div><div class="metric-value pos">'+fmt(P.projected_income)+'</div></div>'
+      +'<div class="metric"><div class="metric-label">Projected net</div><div class="metric-value '+(P.projected_net>=0?'pos':'neg')+'">'+(P.projected_net>=0?'+':'')+fmt(P.projected_net)+'</div></div>'
+      +'</div>'
+      +'<div class="metrics">'
+      +'<div class="metric"><div class="metric-fill" style="width:'+(incPct*100).toFixed(1)+'%;background:var(--green-bg);"></div><div class="metric-label">Projected income</div><div class="metric-value pos">'+fmt(P.projected_income)+'</div><div class="metric-sub"><span>Actual: '+fmt(P.actual_income)+'</span><span class="metric-sub-pct">'+(incPct*100).toFixed(0)+'%</span></div></div>'
+      +'<div class="metric"><div class="metric-fill" style="width:'+(bdgPct*100).toFixed(1)+'%;background:'+(bdgOver?'var(--red-bg)':'var(--amber-bg)')+';"></div><div class="metric-label">Projected budgeted costs</div><div class="metric-value">'+fmt(P.projected_budgeted)+'</div><div class="metric-sub"><span>Actual: '+fmt(P.actual_budgeted)+'</span><span class="metric-sub-pct">'+(bdgPct*100).toFixed(0)+'%</span></div></div>'
+      +'<div class="metric"><div class="metric-label">Unbudgeted costs</div><div class="metric-value">'+fmt(P.nonbudgeted_actual)+'</div><div class="metric-sub"><span>Headroom remaining</span><span class="'+hrColor+'" style="font-weight:500;">'+(P.headroom_remaining>=0?'+':'')+fmt(P.headroom_remaining)+'</span></div></div>'
+      +'</div>';
+  }
 
   // Spend bar (full month context)
   var spentPct=Math.min(totalExp/totalIncome,1);

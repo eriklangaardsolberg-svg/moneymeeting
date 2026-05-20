@@ -424,6 +424,11 @@
       "m": "contains",
       "v": "klarna: polarnopyret.",
       "cat": "Barneutgifter"
+    },
+    {
+      "m": "contains",
+      "v": "nok 15,82 bolt.eu",
+      "cat": "Transport"
     }
   ],
   "categories": [

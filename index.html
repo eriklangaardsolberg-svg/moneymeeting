@@ -1099,20 +1099,6 @@ function render(d){
       return Object.assign({},item,{seen:seen,autoSeen:autoSeen,manualState:manualState||null});
     });
     var pendingFixedTotal=fixedItems.filter(function(x){return!x.seen;}).reduce(function(s,x){return s+x.amount;},0);
-    var varBudgetRemaining=d.varRows.reduce(function(s,r){return s+Math.max(0,r.budget-r.actual);},0);
-    var headroom=P.effectiveIncome-d.totalExp-pendingFixedTotal-varBudgetRemaining;
-    var headroomColor=headroom>=0?'pos':'neg';
-
-    // Section A: Month-end headroom (3 summary boxes only)
-    var _headroomBoxes='<div class="metrics">'
-      +'<div class="metric"><div class="metric-label">'+(P.salaryReceived?'Income received':'Expected income')+'</div><div class="metric-value pos">'+fmt(P.effectiveIncome)+(P.salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div>'
-      +'<div class="metric"><div class="metric-label">Spent so far</div><div class="metric-value">'+fmt(d.totalExp)+'</div></div>'
-      +'<div class="metric"><div class="metric-label">Headroom left</div><div class="metric-value '+headroomColor+'">'+fmt(headroom)+'</div></div>'
-      +'</div>';
-    if(!P.salaryReceived){
-      _headroomBoxes+='<div style="font-size:12px;color:var(--amber);padding:8px 12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);">Salary not yet received \u2014 using 55\u202F697\u202Fkr \u00d7 2 as expected income. Once salary transfers appear, mark them as \u201cSalary in\u201d in the transfers panel.</div>';
-    }
-    h+=sectionWrap('sec_headroom','Month-end headroom',_headroomBoxes);
 
     // Section B: Fixed items - paid / pending (independently collapsible)
     var _paidPendingBody='<div class="table-wrap"><table>';

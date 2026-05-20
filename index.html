@@ -24,12 +24,18 @@ body{font-family:'DM Sans',sans-serif;font-size:14px;background:var(--bg);color:
 .btn-green{background:var(--green-bg);color:var(--green);border-color:var(--green-bd);}
 .btn-green:hover{background:#d8eee2;}
 .btn-run{margin-top:12px;width:100%;padding:12px;font-size:14px;}
-.upload-zone{border:1.5px dashed var(--border2);border-radius:var(--rl);padding:36px 24px;text-align:center;cursor:pointer;transition:background .15s,border-color .15s;background:var(--surface);}
+.upload-zone{border:1.5px dashed var(--border2);border-radius:var(--rl);padding:36px 24px;text-align:center;cursor:pointer;transition:background .15s,border-color .15s,padding .15s;background:var(--surface);}
 .upload-zone:hover,.upload-zone.dragover{background:var(--surface2);border-color:var(--text3);}
 .upload-zone input{display:none;}
 .upload-icon{font-size:26px;margin-bottom:10px;opacity:.35;}
 .upload-title{font-size:15px;font-weight:500;margin-bottom:4px;}
 .upload-sub{font-size:13px;color:var(--text3);}
+.upload-zone.compact{padding:8px 14px;display:flex;align-items:center;gap:10px;text-align:left;}
+.upload-zone.compact .upload-icon,.upload-zone.compact .upload-sub{display:none;}
+.upload-zone.compact .upload-title{font-size:11px;font-weight:500;color:var(--text3);margin:0;text-transform:uppercase;letter-spacing:.8px;}
+.upload-zone.compact #badge{margin-left:auto;}
+.upload-zone.compact .file-badge{margin-top:0;padding:3px 12px;font-size:12px;}
+.btn-run.compact{margin-top:8px;width:auto;padding:6px 14px;font-size:13px;display:inline-block;}
 .file-badge{display:inline-flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:5px 14px;font-size:13px;margin-top:14px;}
 .file-badge .rm{cursor:pointer;color:var(--text3);font-size:16px;}
 .file-badge .rm:hover{color:var(--red);}
@@ -486,7 +492,9 @@ function loadFile(file){
   var reader=new FileReader();
   reader.onload=function(e){
     csvText=e.target.result;
-    document.getElementById('badge').innerHTML='<div class="file-badge"><span>'+file.name+'</span><span class="rm" onclick="clearF()">\u00d7</span></div>';
+    document.getElementById('badge').innerHTML='<div class="file-badge"><span>'+file.name+'</span><span class="rm" onclick="event.stopPropagation();clearF()">\u00d7</span></div>';
+    document.getElementById('dz').classList.add('compact');
+    runBtn.classList.add('compact');
     runBtn.disabled=false;
   };
   reader.readAsText(file,'UTF-8');
@@ -495,7 +503,10 @@ function clearF(){
   csvText=null;fi.value='';
   // Don't clear transferState/txOverrides - state is preserved for re-upload
   // State only resets when a new month is detected in the run button
-  document.getElementById('badge').innerHTML='';runBtn.disabled=true;
+  document.getElementById('badge').innerHTML='';
+  document.getElementById('dz').classList.remove('compact');
+  runBtn.classList.remove('compact');
+  runBtn.disabled=true;
   document.getElementById('report').innerHTML='';document.getElementById('err').innerHTML='';
   document.getElementById('printBtn').style.display='none';
 }
@@ -1008,7 +1019,7 @@ function render(d){
   bufferTotal+=bufferTransferTotal;
   var realIncome=d.totalIncome-bufferTotal;
 
-  h+='<div class="metrics"><div class="metric"><div class="metric-label">Total income</div><div class="metric-value pos">'+fmt(realIncome)+'</div></div><div class="metric"><div class="metric-label">Total expenses</div><div class="metric-value">'+fmt(d.totalExp)+'</div></div><div class="metric"><div class="metric-label">Net position</div><div class="metric-value '+(( realIncome-d.totalExp)>=0?'pos':'neg')+'">'+(( realIncome-d.totalExp)>=0?'+':'')+fmt(realIncome-d.totalExp)+'</div></div></div>';
+  h+='<div class="metrics" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="metric"><div class="metric-label">Total income</div><div class="metric-value pos">'+fmt(realIncome)+'</div></div><div class="metric"><div class="metric-label">Total expenses'+(d.isPartial?' <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text3)">· so far this month</span>':'')+'</div><div class="metric-value">'+fmt(d.totalExp)+'</div></div></div>';
 
   // Buffer alert box
   if(bufferTotal>0){
@@ -1044,7 +1055,9 @@ function render(d){
     var nbTotal=d.nonBudgeted.reduce(function(s,item){return s+item[1].reduce(function(ss,t){return ss+t.amount;},0);},0);
     var nbWithoutMisc=d.nonBudgeted.filter(function(item){return item[0]!=='Misc';});
     var nbTotalWithoutMisc=nbWithoutMisc.reduce(function(s,item){return s+item[1].reduce(function(ss,t){return ss+t.amount;},0);},0);
-    h+=sectionWrap('sec_nonbudget','Non-budgeted expenses <span class="hint">\u00b7 click rows to expand \u00b7 total: '+fmt(nbTotalWithoutMisc)+'</span>','<div class="table-wrap"><table><tr><th>Category</th><th class="tr">Transactions</th><th class="tr">Total</th></tr>'+nbWithoutMisc.map(function(item){var cat=item[0],ts=item[1],total=ts.reduce(function(s,t){return s+t.amount;},0);return makeClickableRow(cat+'_nb',[cat+(ts.some(function(t){return t.amount>2000;})?'<span class="pill pill-amb">notable</span>':''),'<span class="muted">'+ts.length+'</span>',fmt(total)],ts);}).join('')+'<tr><td class="bold" colspan="2">Total</td><td class="tr bold">'+fmt(nbTotalWithoutMisc)+'</td></tr></table></div>');
+    var fixedTotalBudget=d.fixedRows.reduce(function(s,r){return s+r.budget;},0);
+    var typicalNonbudget=111000-varTotalBudget-fixedTotalBudget;
+    h+=sectionWrap('sec_nonbudget','Non-budgeted expenses <span class="hint">\u00b7 click rows to expand \u00b7 total: '+fmt(nbTotalWithoutMisc)+' (typical: '+fmt(typicalNonbudget)+')</span>','<div class="table-wrap"><table><tr><th>Category</th><th class="tr">Transactions</th><th class="tr">Total</th></tr>'+nbWithoutMisc.map(function(item){var cat=item[0],ts=item[1],total=ts.reduce(function(s,t){return s+t.amount;},0);return makeClickableRow(cat+'_nb',[cat+(ts.some(function(t){return t.amount>2000;})?'<span class="pill pill-amb">notable</span>':''),'<span class="muted">'+ts.length+'</span>',fmt(total)],ts);}).join('')+'<tr><td class="bold" colspan="2">Total</td><td class="tr bold">'+fmt(nbTotalWithoutMisc)+'</td></tr></table></div>');
   }
 
   if(d.isPartial){

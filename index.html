@@ -34,11 +34,17 @@ body{font-family:'DM Sans',sans-serif;font-size:14px;background:var(--bg);color:
 .file-badge .rm{cursor:pointer;color:var(--text3);font-size:16px;}
 .file-badge .rm:hover{color:var(--red);}
 .metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:32px;}
-.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px 20px;}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px 20px;position:relative;overflow:hidden;}
+.metric>*{position:relative;z-index:1;}
+.metric .metric-fill{position:absolute;left:0;top:0;bottom:0;z-index:0;transition:width .3s ease;}
 .metric-label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:6px;font-weight:500;}
 .metric-value{font-size:22px;font-weight:500;letter-spacing:-.5px;}
 .metric-value.pos{color:var(--green);}
 .metric-value.neg{color:var(--red);}
+.metric-sub{font-size:11px;color:var(--text2);margin-top:10px;display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+.metric-sub-pct{font-weight:500;color:var(--text2);}
+.metric-sub .pos{color:var(--green);}
+.metric-sub .neg{color:var(--red);}
 .section{margin-bottom:32px;}
 .section-title{font-size:11px;text-transform:uppercase;letter-spacing:.8px;font-weight:500;color:var(--text3);margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .section-title .hint{font-size:11px;text-transform:none;letter-spacing:0;font-weight:400;}
@@ -542,6 +548,7 @@ async function sbSaveSession(d1,report,baseTransactions){
     if(!txResp.ok){var txErr=await txResp.text();console.warn('[SB] Transaction save failed ('+txResp.status+'):', txErr);}
   }
   // Save session: PATCH if exists, POST if new
+  var proj=computeProjection(report);
   var session={
     month_key:monthKey,
     month_label:monthLabel,
@@ -553,6 +560,17 @@ async function sbSaveSession(d1,report,baseTransactions){
     fixed_paid:window._fixedPaid||{},
     categories:CATEGORIES,
     manual_expenses:manualExpenses,
+    projection:proj?{
+      projected_income:proj.effectiveIncome,
+      actual_income:proj.actualIncome,
+      salary_received:proj.salaryReceived,
+      projected_budgeted:proj.projectedBudgeted,
+      actual_budgeted:proj.actualBudgeted,
+      nonbudgeted_actual:proj.nonBudgetedActual,
+      headroom_remaining:proj.headroomRemaining,
+      projected_expenses:proj.projExp,
+      projected_net:proj.projNet
+    }:null,
     status:'in_progress',
     updated_at:new Date().toISOString()
   };
@@ -755,6 +773,34 @@ function buildReport(allInternals,baseTransactions){
   var totalIncome=income.reduce(function(s,t){return s+t.amount;},0);
   var totalExp=expenses.reduce(function(s,t){return s+t.amount;},0);
   return{income:income,totalIncome:totalIncome,varRows:varRows,fixedRows:fixedRows,nonBudgeted:nonBudgeted,byCategory:byCategory,totalExp:totalExp,net:totalIncome-totalExp,allInternals:allInternals,baseTransactions:baseTransactions,daysElapsed:daysElapsed,daysInMonth:daysInMonth,isPartial:daysElapsed<daysInMonth-1,d1:d1};
+}
+
+function computeProjection(d){
+  if(!d||!d.isPartial)return null;
+  var SALARY_PER_PERSON=55697;
+  var SALARY_EXPECTED=SALARY_PER_PERSON*2;
+  var salaryActual=d.income.filter(function(t){
+    var ov=txOverrides[uid(t)];
+    var label=ov&&ov.incomeLabel?ov.incomeLabel:(t.cat==='INCOME_SALARY'?'Salary':t.cat==='INCOME_TRANSFER'?'Salary transfer':null);
+    return label==='Salary'||label==='Salary transfer';
+  }).reduce(function(s,t){return s+t.amount;},0);
+  var salaryReceived=salaryActual>0;
+  var salaryForCalc=salaryReceived?salaryActual:SALARY_EXPECTED;
+  var otherIncome=d.income.filter(function(t){
+    var ov=txOverrides[uid(t)];
+    var label=ov&&ov.incomeLabel?ov.incomeLabel:(t.cat==='INCOME_SALARY'?'Salary':t.cat==='INCOME_TRANSFER'?'Salary transfer':null);
+    return label!=='Salary'&&label!=='Salary transfer'&&label!=='Buffer drawdown';
+  }).reduce(function(s,t){return s+t.amount;},0);
+  var effectiveIncome=salaryForCalc+otherIncome;
+  var actualIncome=salaryActual+otherIncome;
+  var rate=d.daysInMonth/d.daysElapsed;
+  var projExp=Math.round(d.totalExp*rate);
+  var projNet=effectiveIncome-projExp;
+  var projectedBudgeted=d.varRows.reduce(function(s,r){return s+r.budget;},0)+d.fixedRows.reduce(function(s,r){return s+r.budget;},0);
+  var actualBudgeted=d.varRows.reduce(function(s,r){return s+r.actual;},0)+d.fixedRows.reduce(function(s,r){return s+r.actual;},0);
+  var nonBudgetedActual=d.nonBudgeted.filter(function(item){return item[0]!=='Misc';}).reduce(function(s,item){return s+item[1].reduce(function(ss,t){return ss+t.amount;},0);},0);
+  var headroomRemaining=effectiveIncome-projectedBudgeted-nonBudgetedActual;
+  return{SALARY_PER_PERSON:SALARY_PER_PERSON,SALARY_EXPECTED:SALARY_EXPECTED,salaryActual:salaryActual,salaryReceived:salaryReceived,salaryForCalc:salaryForCalc,otherIncome:otherIncome,effectiveIncome:effectiveIncome,actualIncome:actualIncome,projExp:projExp,projNet:projNet,projectedBudgeted:projectedBudgeted,actualBudgeted:actualBudgeted,nonBudgetedActual:nonBudgetedActual,headroomRemaining:headroomRemaining};
 }
 
 function pushUndo(label,fn){undoStack.push({label:label,fn:fn});showToast(label);}
@@ -1000,116 +1046,75 @@ function render(d){
   }
 
   if(d.isPartial){
-    // ── Salary logic ────────────────────────────────────────────────────
-    // Each person earns 55,697 kr net. If their salary is not yet seen in
-    // the file, substitute the expected amount. If seen, use actual.
-    var SALARY_PER_PERSON=55697;
-    var SALARY_EXPECTED=SALARY_PER_PERSON*2; // 111,394
+    var P=computeProjection(d);
 
-    // Salary seen = income transactions classified as Salary or Salary transfer
-    var salaryActual=d.income.filter(function(t){
-      var ov=txOverrides[uid(t)];
-      var label=ov&&ov.incomeLabel?ov.incomeLabel:(t.cat==='INCOME_SALARY'?'Salary':t.cat==='INCOME_TRANSFER'?'Salary transfer':null);
-      return label==='Salary'||label==='Salary transfer';
-    }).reduce(function(s,t){return s+t.amount;},0);
+    // Projection section: row 1 (kept) + row 2 (income / budget / unbudgeted with fill bars)
+    var _projBody='<div class="metrics">'
+      +'<div class="metric"><div class="metric-label">Projected expenses</div><div class="metric-value">'+fmt(P.projExp)+'</div></div>'
+      +'<div class="metric"><div class="metric-label">'+(P.salaryReceived?'Actual income':'Expected income')+'</div><div class="metric-value pos">'+fmt(P.effectiveIncome)+(P.salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div>'
+      +'<div class="metric"><div class="metric-label">Projected net</div><div class="metric-value '+(P.projNet>=0?'pos':'neg')+'">'+(P.projNet>=0?'+':'')+fmt(P.projNet)+'</div></div>'
+      +'</div>';
+    var incomeFillPct=P.effectiveIncome>0?Math.min(P.actualIncome/P.effectiveIncome,1):0;
+    var budgetFillPct=P.projectedBudgeted>0?Math.min(P.actualBudgeted/P.projectedBudgeted,1):0;
+    var budgetOver=P.actualBudgeted>P.projectedBudgeted;
+    var headroomNewColor=P.headroomRemaining>=0?'pos':'neg';
+    _projBody+='<div class="metrics">'
+      +'<div class="metric">'
+        +'<div class="metric-fill" style="width:'+(incomeFillPct*100).toFixed(1)+'%;background:var(--green-bg);"></div>'
+        +'<div class="metric-label">Projected income</div>'
+        +'<div class="metric-value pos">'+fmt(P.effectiveIncome)+'</div>'
+        +'<div class="metric-sub"><span>Actual: '+fmt(P.actualIncome)+'</span><span class="metric-sub-pct">'+(incomeFillPct*100).toFixed(0)+'%</span></div>'
+      +'</div>'
+      +'<div class="metric">'
+        +'<div class="metric-fill" style="width:'+(budgetFillPct*100).toFixed(1)+'%;background:'+(budgetOver?'var(--red-bg)':'var(--amber-bg)')+';"></div>'
+        +'<div class="metric-label">Projected budgeted costs</div>'
+        +'<div class="metric-value">'+fmt(P.projectedBudgeted)+'</div>'
+        +'<div class="metric-sub"><span>Actual: '+fmt(P.actualBudgeted)+'</span><span class="metric-sub-pct">'+(budgetFillPct*100).toFixed(0)+'%</span></div>'
+      +'</div>'
+      +'<div class="metric">'
+        +'<div class="metric-label">Unbudgeted costs</div>'
+        +'<div class="metric-value">'+fmt(P.nonBudgetedActual)+'</div>'
+        +'<div class="metric-sub"><span>Headroom remaining</span><span class="'+headroomNewColor+'" style="font-weight:500;">'+(P.headroomRemaining>=0?'+':'')+fmt(P.headroomRemaining)+'</span></div>'
+      +'</div>'
+      +'</div>';
+    h+=sectionWrap('sec_projection','Projection \u2014 '+d.daysElapsed+' of '+d.daysInMonth+' days elapsed',_projBody);
 
-    var salaryReceived=salaryActual>0;
-    var salaryForCalc=salaryReceived?salaryActual:SALARY_EXPECTED;
-
-    // Other income (NAV, project, refunds) — always use actual, exclude buffer drawdowns
-    var otherIncome=d.income.filter(function(t){
-      var ov=txOverrides[uid(t)];
-      var label=ov&&ov.incomeLabel?ov.incomeLabel:(t.cat==='INCOME_SALARY'?'Salary':t.cat==='INCOME_TRANSFER'?'Salary transfer':null);
-      return label!=='Salary'&&label!=='Salary transfer'&&label!=='Buffer drawdown';
-    }).reduce(function(s,t){return s+t.amount;},0);
-
-    var effectiveIncome=salaryForCalc+otherIncome;
-
-    // Projection — use effective income
-    var rate=d.daysInMonth/d.daysElapsed;
-    var totalBudget=d.varRows.reduce(function(s,r){return s+r.budget;},0)+d.fixedRows.reduce(function(s,r){return s+r.budget;},0);
-    // Projected expenses: prorate current spend across full month
-    var projExp=Math.round(d.totalExp*rate);
-    var projNet=effectiveIncome-projExp;
-    h+=sectionWrap('sec_projection','Projection \u2014 '+d.daysElapsed+' of '+d.daysInMonth+' days elapsed','<div class="metrics"><div class="metric"><div class="metric-label">Projected expenses</div><div class="metric-value">'+fmt(projExp)+'</div></div><div class="metric"><div class="metric-label">'+(salaryReceived?'Actual income':'Expected income')+'</div><div class="metric-value pos">'+fmt(effectiveIncome)+(salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div><div class="metric"><div class="metric-label">Projected net</div><div class="metric-value '+(projNet>=0?'pos':'neg')+'">'+(projNet>=0?'+':'')+fmt(projNet)+'</div></div></div>');
-
-    // ── Headroom ─────────────────────────────────────────────────────────
-    // Search ALL expense transactions for each fixed item (not just one category)
-    var allExpenseTxs=Object.keys(d.byCategory).reduce(function(arr,cat){return arr.concat(d.byCategory[cat]||[]);},[]); 
+    // Fixed items detection (drives both headroom calc and paid/pending list)
+    var allExpenseTxs=Object.keys(d.byCategory).reduce(function(arr,cat){return arr.concat(d.byCategory[cat]||[]);},[]);
     var fixedItems=[
       {key:'mortgage', label:'Mortgage',amount:28000,     patterns:[/bolij/i,/mortgage/i,/l.n\s+510288/i]},
       {key:'sameiet',  label:'Sameiet OG59A',amount:4004, patterns:[/sameiet og59a/i]},
-      {key:'laan',     label:'Lånekassen',amount:3418,    patterns:[/l.nekassen/i,/lanekassen/i,/lånekassen/i,/statens l/i]},
+      {key:'laan',     label:'L\u00e5nekassen',amount:3418,patterns:[/l.nekassen/i,/lanekassen/i,/l\u00e5nekassen/i,/statens l/i]},
       {key:'homely',   label:'Homely',amount:339,          patterns:[/homely/i]},
       {key:'unicef',   label:'Unicef',amount:500,          patterns:[/unicef/i]},
-      {key:'tjome',    label:'Tjøme',amount:1000,          patterns:[/tj.?me/i,/tjøme/i]},
+      {key:'tjome',    label:'Tj\u00f8me',amount:1000,    patterns:[/tj.?me/i,/tj\u00f8me/i]},
       {key:'proptax',  label:'Property tax',amount:500,    patterns:[/skatteetaten/i,/eiendomsskatt/i]},
       {key:'childcare',label:'Childcare (nursery)',amount:2640,patterns:[/utdanningsetaten/i,/barnehage/i]},
     ].map(function(item){
       var autoSeen=allExpenseTxs.some(function(t){return item.patterns.some(function(p){return p.test(t.desc);});});
-      var manualState=window._fixedPaid&&window._fixedPaid[item.key]; // 'paid'|'pending'|undefined
+      var manualState=window._fixedPaid&&window._fixedPaid[item.key];
       var seen=manualState==='paid'||(manualState!=='pending'&&autoSeen);
       return Object.assign({},item,{seen:seen,autoSeen:autoSeen,manualState:manualState||null});
     });
-    var pendingFixed=fixedItems.filter(function(x){return!x.seen;});
-    var pendingFixedTotal=pendingFixed.reduce(function(s,x){return s+x.amount;},0);
-    // Remaining variable budget (positive = still have budget left to spend)
+    var pendingFixedTotal=fixedItems.filter(function(x){return!x.seen;}).reduce(function(s,x){return s+x.amount;},0);
     var varBudgetRemaining=d.varRows.reduce(function(s,r){return s+Math.max(0,r.budget-r.actual);},0);
-    var varBudgetOver=d.varRows.reduce(function(s,r){return s+Math.max(0,r.actual-r.budget);},0);
-    var headroom=effectiveIncome-d.totalExp-pendingFixedTotal-varBudgetRemaining;
+    var headroom=P.effectiveIncome-d.totalExp-pendingFixedTotal-varBudgetRemaining;
     var headroomColor=headroom>=0?'pos':'neg';
 
-    var _headroomBody='';
-    _headroomBody+='<div class="metrics">';
-    _headroomBody+='<div class="metric"><div class="metric-label">'+(salaryReceived?'Income received':'Expected income')+'</div><div class="metric-value pos">'+fmt(effectiveIncome)+(salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div>';
-    _headroomBody+='<div class="metric"><div class="metric-label">Spent so far</div><div class="metric-value">'+fmt(d.totalExp)+'</div></div>';
-    _headroomBody+='<div class="metric"><div class="metric-label">Headroom left</div><div class="metric-value '+headroomColor+'">'+fmt(headroom)+'</div></div>';
-    _headroomBody+='</div>';
+    // Section A: Month-end headroom (3 summary boxes only)
+    var _headroomBoxes='<div class="metrics">'
+      +'<div class="metric"><div class="metric-label">'+(P.salaryReceived?'Income received':'Expected income')+'</div><div class="metric-value pos">'+fmt(P.effectiveIncome)+(P.salaryReceived?'':' <span style="font-size:11px;font-weight:400;color:var(--amber)">est.</span>')+'</div></div>'
+      +'<div class="metric"><div class="metric-label">Spent so far</div><div class="metric-value">'+fmt(d.totalExp)+'</div></div>'
+      +'<div class="metric"><div class="metric-label">Headroom left</div><div class="metric-value '+headroomColor+'">'+fmt(headroom)+'</div></div>'
+      +'</div>';
+    if(!P.salaryReceived){
+      _headroomBoxes+='<div style="font-size:12px;color:var(--amber);padding:8px 12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);">Salary not yet received \u2014 using 55\u202F697\u202Fkr \u00d7 2 as expected income. Once salary transfers appear, mark them as \u201cSalary in\u201d in the transfers panel.</div>';
+    }
+    h+=sectionWrap('sec_headroom','Month-end headroom',_headroomBoxes);
 
-    // ── Spend bar ──────────────────────────────────────────────────────
-    var _totalBudget=effectiveIncome;
-    var _spentPct=Math.min(d.totalExp/_totalBudget,1);
-    var _pacePct=Math.min(d.daysElapsed/d.daysInMonth,1);
-    var _overPace=_spentPct>_pacePct;
-    var _overBudget=d.totalExp>_totalBudget;
-    var _fillColor=_overBudget?'#c0392b':_overPace?'#8a5c00':'#1a7a4a';
-    var _fillBg=_overBudget?'#fdf0ee':_overPace?'#fdf6e3':'#eaf4ee';
-    _headroomBody+='<div style="margin:16px 0 20px;">'
-      +'<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:6px;">'
-        +'<span>Spend vs income</span>'
-        +'<span>'+fmt(d.totalExp)+' of '+fmt(_totalBudget)+'</span>'
-      +'</div>'
-      +'<div style="position:relative;height:10px;background:'+_fillBg+';border-radius:6px;">'
-        +'<div style="width:'+(_spentPct*100).toFixed(1)+'%;height:100%;background:'+_fillColor+';border-radius:6px;"></div>'
-        +'<div style="position:absolute;top:-4px;left:'+(_pacePct*100).toFixed(1)+'%;width:2px;height:18px;background:var(--text);border-radius:1px;">'
-          +'<div style="position:absolute;top:20px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--text3);white-space:nowrap;">day '+d.daysElapsed+' pace</div>'
-        +'</div>'
-      +'</div>'
-      +'<div style="display:flex;gap:16px;margin-top:28px;font-size:12px;color:var(--text2);flex-wrap:wrap;">'
-        +'<span style="display:flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:2px;background:'+_fillColor+';flex-shrink:0;"></span>Spent: '+(_spentPct*100).toFixed(0)+'%</span>'
-        +'<span style="display:flex;align-items:center;gap:5px;"><span style="width:2px;height:8px;border-radius:1px;background:var(--text);flex-shrink:0;"></span>Pace: '+(_pacePct*100).toFixed(0)+'% of month</span>'
-        +(headroom>=0?'<span style="display:flex;align-items:center;gap:5px;color:var(--green);">Headroom: '+fmt(headroom)+'</span>':'<span style="color:var(--red);">Over by: '+fmt(Math.abs(headroom))+'</span>')
-      +'</div>'
-    +'</div>';
-
-    _headroomBody+='<div class="table-wrap"><table>';
-    _headroomBody+='<tr><th>Item</th><th class="tr">Amount</th><th>Status</th><th></th></tr>';
-    if(!salaryReceived){
-      _headroomBody+='<tr><td>Salary (person 1) <span class="pill pill-amb">expected</span></td><td class="tr pos">+'+fmt(SALARY_PER_PERSON)+'</td><td class="muted">not yet received</td><td></td></tr>';
-      _headroomBody+='<tr><td>Salary (person 2) <span class="pill pill-amb">expected</span></td><td class="tr pos">+'+fmt(SALARY_PER_PERSON)+'</td><td class="muted">not yet received</td><td></td></tr>';
-    }else{
-      _headroomBody+='<tr><td>Salary received</td><td class="tr pos">+'+fmt(salaryActual)+'</td><td class="muted">seen in file</td><td></td></tr>';
-    }
-    if(otherIncome>0){
-      _headroomBody+='<tr><td>Other income</td><td class="tr pos">+'+fmt(otherIncome)+'</td><td class="muted">seen in file</td><td></td></tr>';
-    }
-    _headroomBody+='<tr><td>Expenses so far</td><td class="tr neg">\u2212'+fmt(d.totalExp)+'</td><td class="muted">all classified transactions</td><td></td></tr>';
-    if(varBudgetRemaining>0){
-      _headroomBody+='<tr><td>Variable budget remaining <span class="pill pill-amb">to spend</span></td><td class="tr neg">\u2212'+fmt(varBudgetRemaining)+'</td><td class="muted">unspent variable budget</td><td></td></tr>';
-    }
-    if(varBudgetOver>0){
-      _headroomBody+='<tr><td>Variable budget overrun</td><td class="tr neg">\u2212'+fmt(varBudgetOver)+'</td><td class="muted">already over budget</td><td></td></tr>';
-    }
+    // Section B: Fixed items - paid / pending (independently collapsible)
+    var _paidPendingBody='<div class="table-wrap"><table>';
+    _paidPendingBody+='<tr><th>Item</th><th class="tr">Amount</th><th>Status</th><th></th></tr>';
     fixedItems.forEach(function(x){
       var statusText=x.seen
         ?(x.manualState==='paid'?'marked paid manually':(x.autoSeen?'found in transactions':'marked paid manually'))
@@ -1118,18 +1123,16 @@ function render(d){
       var toggleBtn=x.seen
         ?'<button data-fp-key="'+x.key+'" data-fp-val="pending" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;color:var(--text2)">Mark pending</button>'
         :'<button data-fp-key="'+x.key+'" data-fp-val="paid" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid var(--green-bd);background:var(--green-bg);cursor:pointer;color:var(--green)">Mark paid</button>';
-      _headroomBody+='<tr><td>'+x.label+(x.seen?'':' <span class="pill pill-amb">pending</span>')+'</td>'
+      _paidPendingBody+='<tr><td>'+x.label+(x.seen?'':' <span class="pill pill-amb">pending</span>')+'</td>'
         +'<td class="tr '+(x.seen?'muted':'neg')+'">'+(x.seen?'\u2014':'\u2212'+fmt(x.amount))+'</td>'
         +'<td style="font-size:12px;'+statusColor+'">'+statusText+'</td>'
         +'<td style="text-align:right;white-space:nowrap">'+toggleBtn+'</td></tr>';
     });
-    // Buffer drawdown shown in top summary box only - not in headroom breakdown
-    _headroomBody+='<tr style="border-top:2px solid var(--border2)"><td class="bold">Headroom remaining</td><td class="tr bold '+headroomColor+'">'+(headroom>=0?'+':'')+fmt(headroom)+'</td><td class="muted">before hitting zero</td><td></td></tr>';
-    _headroomBody+='</table></div>';
-    if(!salaryReceived){
-      _headroomBody+='<div style="margin-top:10px;font-size:12px;color:var(--amber);padding:8px 12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);">Salary not yet received \u2014 using 55\u202F697\u202Fkr \u00d7 2 as expected income. Once salary transfers appear, mark them as \u201cSalary in\u201d in the transfers panel.</div>';
+    if(pendingFixedTotal>0){
+      _paidPendingBody+='<tr style="border-top:2px solid var(--border2)"><td class="bold">Pending fixed payments</td><td class="tr bold neg">\u2212'+fmt(pendingFixedTotal)+'</td><td class="muted">remaining to pay</td><td></td></tr>';
     }
-    h+=sectionWrap('sec_headroom','Month-end headroom',_headroomBody);
+    _paidPendingBody+='</table></div>';
+    h+=sectionWrap('sec_paid_pending','Fixed items \u2014 paid / pending',_paidPendingBody);
   }
 
   // Misc — with total
